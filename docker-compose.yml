@@ -80,7 +80,7 @@ services:
 
   # API Gateway
   api-gateway:
-    image: ghcr.io/saurabh3108/payflow-api-gateway:latest
+    image: ghcr.io/saurabh3108/payflow-api-gateway:develop
     container_name: payflow-api-gateway
     build:
       context: .
@@ -106,7 +106,7 @@ services:
 
   # Account Service
   account-service:
-    image: ghcr.io/saurabh3108/payflow-account-service:latest
+    image: ghcr.io/saurabh3108/payflow-account-service:develop
     container_name: payflow-account-service
     build:
       context: .
@@ -135,7 +135,7 @@ services:
 
   # Transaction Service
   transaction-service:
-    image: ghcr.io/saurabh3108/payflow-transaction-service:latest
+    image: ghcr.io/saurabh3108/payflow-transaction-service:develop
     container_name: payflow-transaction-service
     build:
       context: .
@@ -167,7 +167,7 @@ services:
 
   # Notification Service
   notification-service:
-    image: ghcr.io/saurabh3108/payflow-notification-service:latest
+    image: ghcr.io/saurabh3108/payflow-notification-service:develop
     container_name: payflow-notification-service
     build:
       context: .
@@ -195,7 +195,7 @@ services:
 
   # React Frontend
   frontend:
-    image: ghcr.io/saurabh3108/payflow-frontend:latest
+    image: ghcr.io/saurabh3108/payflow-frontend:develop
     container_name: payflow-frontend
     build:
       context: ./frontend
