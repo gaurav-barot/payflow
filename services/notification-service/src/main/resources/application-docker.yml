@@ -1,0 +1,15 @@
+# ===========================================
+# DOCKER PROFILE
+# ===========================================
+# Used when running in Docker Compose
+# Activated by: SPRING_PROFILES_ACTIVE=docker
+
+spring:
+  kafka:
+    bootstrap-servers: kafka:9092
+
+logging:
+  level:
+    com.payflow: INFO
+    org.springframework.kafka: WARN
+

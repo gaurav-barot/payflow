@@ -1,0 +1,36 @@
+# ===========================================
+# DOCKER PROFILE
+# ===========================================
+# Used when running in Docker Compose
+# Activated by: SPRING_PROFILES_ACTIVE=docker
+
+services:
+  account-service:
+    url: http://account-service:8081
+  transaction-service:
+    url: http://transaction-service:8082
+  notification-service:
+    url: http://notification-service:8083
+
+spring:
+  cloud:
+    gateway:
+      routes:
+        - id: account-service
+          uri: ${services.account-service.url}
+          predicates:
+            - Path=/api/accounts/**
+        - id: transaction-service
+          uri: ${services.transaction-service.url}
+          predicates:
+            - Path=/api/transactions/**
+        - id: notification-service
+          uri: ${services.notification-service.url}
+          predicates:
+            - Path=/api/notifications/**
+
+logging:
+  level:
+    org.springframework.cloud.gateway: INFO
+    com.payflow: INFO
+

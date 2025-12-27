@@ -1,0 +1,42 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: payflow-ingress
+  namespace: payflow
+  annotations:
+    # Using NGINX Ingress Controller (switched from traefik)
+    kubernetes.io/ingress.class: nginx
+    # NGINX specific annotations
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+spec:
+  ingressClassName: nginx
+  rules:
+  - http:
+      paths:
+      # API Gateway routes
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: api-gateway
+            port:
+              number: 8080
+      # Swagger UI
+      - path: /swagger-ui
+        pathType: Prefix
+        backend:
+          service:
+            name: api-gateway
+            port:
+              number: 8080
+      # Future: Frontend static files
+      # - path: /
+      #   pathType: Prefix
+      #   backend:
+      #     service:
+      #       name: frontend
+      #       port:
+      #         number: 80
+

@@ -1,0 +1,24 @@
+# ===========================================
+# DOCKER PROFILE
+# ===========================================
+# Used when running in Docker Compose
+# Activated by: SPRING_PROFILES_ACTIVE=docker
+
+spring:
+  datasource:
+    url: jdbc:postgresql://postgres:5432/payflow_db
+    username: payflow_user
+    password: PayFlow@2025
+  
+  kafka:
+    bootstrap-servers: kafka:9092
+
+# Account service URL for inter-service communication
+account-service:
+  url: http://account-service:8081
+
+logging:
+  level:
+    com.payflow: INFO
+    org.springframework.kafka: WARN
+

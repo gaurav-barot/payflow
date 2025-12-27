@@ -1,0 +1,37 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.idea
+.vscode
+*.iml
+
+# Node modules (frontend)
+frontend/node_modules
+frontend/dist
+frontend/.vite
+
+# Maven targets (we build inside Docker)
+**/target
+
+# Logs
+**/*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+
+# K8s manifests (not needed in image)
+k8s/
+
+# Documentation
+*.md
+!README.md
+
+# Nginx local config (we have separate in frontend)
+nginx/
+

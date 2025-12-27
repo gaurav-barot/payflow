@@ -1,0 +1,30 @@
+# ===========================================
+# PRODUCTION PROFILE (Kubernetes/Docker)
+# ===========================================
+# Run with: java -jar api-gateway.jar --spring.profiles.active=prod
+# Or set environment variable: SPRING_PROFILES_ACTIVE=prod
+# In K8s, set via ConfigMap or environment variables
+
+services:
+  account-service:
+    url: http://account-service:8081
+  transaction-service:
+    url: http://transaction-service:8082
+  notification-service:
+    url: http://notification-service:8083
+
+spring:
+  cloud:
+    gateway:
+      globalcors:
+        corsConfigurations:
+          '[/**]':
+            allowedOrigins:
+              - "${FRONTEND_URL:https://payflow.example.com}"
+            allowCredentials: true
+
+logging:
+  level:
+    org.springframework.cloud.gateway: INFO
+    com.payflow: INFO
+

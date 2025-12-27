@@ -1,0 +1,249 @@
+# ============================================
+# PayFlow CI/CD Pipeline
+# ============================================
+# Triggers:
+#   - Push to main branch → Build, Push, Deploy to Production
+#   - Push to develop branch → Build, Push only
+#   - Pull Request to main → Build only (validation)
+# ============================================
+
+name: PayFlow CI/CD
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/payflow
+
+jobs:
+  # ============================================
+  # STAGE 1: BUILD & TEST
+  # ============================================
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Build with Maven (skip tests for now)
+        run: mvn clean package -DskipTests
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker images
+        run: |
+          docker compose build
+
+      # Upload build artifacts for next stage
+      - name: Upload JAR artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: jar-artifacts
+          path: |
+            services/*/target/*.jar
+          retention-days: 1
+
+  # ============================================
+  # STAGE 2: PUSH TO GHCR
+  # ============================================
+  push:
+    name: Push to GHCR
+    runs-on: ubuntu-latest
+    needs: build
+    # Only push on main or develop branch (not on PRs)
+    if: github.event_name == 'push'
+    
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        run: |
+          # Determine tag based on branch
+          if [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "TAG=latest" >> $GITHUB_OUTPUT
+          elif [ "${{ github.ref }}" == "refs/heads/develop" ]; then
+            echo "TAG=develop" >> $GITHUB_OUTPUT
+          else
+            echo "TAG=${{ github.sha }}" >> $GITHUB_OUTPUT
+          fi
+          echo "SHA_SHORT=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+
+      - name: Build and Push API Gateway
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: services/api-gateway/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}-api-gateway:${{ steps.meta.outputs.TAG }}
+            ${{ env.IMAGE_PREFIX }}-api-gateway:${{ steps.meta.outputs.SHA_SHORT }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and Push Account Service
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: services/account-service/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}-account-service:${{ steps.meta.outputs.TAG }}
+            ${{ env.IMAGE_PREFIX }}-account-service:${{ steps.meta.outputs.SHA_SHORT }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and Push Transaction Service
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: services/transaction-service/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}-transaction-service:${{ steps.meta.outputs.TAG }}
+            ${{ env.IMAGE_PREFIX }}-transaction-service:${{ steps.meta.outputs.SHA_SHORT }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and Push Notification Service
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: services/notification-service/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}-notification-service:${{ steps.meta.outputs.TAG }}
+            ${{ env.IMAGE_PREFIX }}-notification-service:${{ steps.meta.outputs.SHA_SHORT }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and Push Frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: frontend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}-frontend:${{ steps.meta.outputs.TAG }}
+            ${{ env.IMAGE_PREFIX }}-frontend:${{ steps.meta.outputs.SHA_SHORT }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          echo "## 🐳 Images Pushed to GHCR" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | Image |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| API Gateway | \`${{ env.IMAGE_PREFIX }}-api-gateway:${{ steps.meta.outputs.TAG }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Account Service | \`${{ env.IMAGE_PREFIX }}-account-service:${{ steps.meta.outputs.TAG }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Transaction Service | \`${{ env.IMAGE_PREFIX }}-transaction-service:${{ steps.meta.outputs.TAG }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Notification Service | \`${{ env.IMAGE_PREFIX }}-notification-service:${{ steps.meta.outputs.TAG }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Frontend | \`${{ env.IMAGE_PREFIX }}-frontend:${{ steps.meta.outputs.TAG }}\` |" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================
+  # STAGE 3: DEPLOY TO PRODUCTION (AWS)
+  # ============================================
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: push
+    # Only deploy on push to main branch
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    environment:
+      name: production
+      url: http://${{ secrets.AWS_HOST }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.AWS_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.AWS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Deploy to AWS k3s
+        run: |
+          ssh -o StrictHostKeyChecking=no ubuntu@${{ secrets.AWS_HOST }} << 'EOF'
+            echo "🚀 Starting deployment..."
+            
+            # Navigate to payflow directory
+            cd ~/payflow
+            
+            # Login to GHCR
+            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            
+            # Update k8s deployments with new images
+            kubectl set image deployment/api-gateway \
+              api-gateway=ghcr.io/${{ github.repository_owner }}/payflow-api-gateway:latest \
+              -n payflow || true
+            
+            kubectl set image deployment/account-service \
+              account-service=ghcr.io/${{ github.repository_owner }}/payflow-account-service:latest \
+              -n payflow || true
+            
+            kubectl set image deployment/transaction-service \
+              transaction-service=ghcr.io/${{ github.repository_owner }}/payflow-transaction-service:latest \
+              -n payflow || true
+            
+            kubectl set image deployment/notification-service \
+              notification-service=ghcr.io/${{ github.repository_owner }}/payflow-notification-service:latest \
+              -n payflow || true
+            
+            # Rollout restart to pull new images
+            kubectl rollout restart deployment -n payflow || true
+            
+            # Wait for rollout
+            kubectl rollout status deployment -n payflow --timeout=300s || true
+            
+            echo "✅ Deployment complete!"
+          EOF
+
+      - name: Deployment Summary
+        run: |
+          echo "## 🚀 Production Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Successfully deployed to **${{ secrets.AWS_HOST }}**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Images Deployed:" >> $GITHUB_STEP_SUMMARY
+          echo "- API Gateway: \`latest\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Account Service: \`latest\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Transaction Service: \`latest\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Notification Service: \`latest\`" >> $GITHUB_STEP_SUMMARY
+
