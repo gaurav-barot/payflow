@@ -2,11 +2,13 @@
 # PayFlow CI/CD Pipeline
 # ============================================
 # Triggers:
-#   - Push to main branch → Build & Push to GHCR
-#   - Push to develop branch → Build & Push to GHCR
+#   - Push to main branch → Build, Push to GHCR, Deploy to AWS (prod)
+#   - Push to develop branch → Build, Push to GHCR, Deploy to Dev
 #   - Pull Request to main → Build only (validation)
 # ============================================
-# NOTE: Deploy to AWS (CD) will be added in Phase 2
+# Environments:
+#   - develop branch → Development environment
+#   - main branch → Production environment (AWS)
 # ============================================
 
 name: PayFlow CI/CD
@@ -19,6 +21,17 @@ on:
   pull_request:
     branches:
       - main
+  # Manual trigger for deployment
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'development'
+        type: choice
+        options:
+          - development
+          - production
 
 env:
   REGISTRY: ghcr.io
@@ -61,11 +74,15 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     # Only push on main or develop branch (not on PRs)
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     
     permissions:
       contents: read
       packages: write
+
+    outputs:
+      image_tag: ${{ steps.meta.outputs.TAG }}
+      sha_short: ${{ steps.meta.outputs.SHA_SHORT }}
 
     steps:
       - name: Checkout code
@@ -176,9 +193,177 @@ jobs:
           echo "| Notification Service | \`${{ env.IMAGE_PREFIX }}-notification-service:${{ steps.meta.outputs.TAG }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Frontend | \`${{ env.IMAGE_PREFIX }}-frontend:${{ steps.meta.outputs.TAG }}\` |" >> $GITHUB_STEP_SUMMARY
 
-# ============================================
-# STAGE 3: DEPLOY TO PRODUCTION (AWS) - PHASE 2
-# ============================================
-# This stage will be enabled when AWS deployment is configured.
-# Required secrets: AWS_HOST, AWS_SSH_KEY, GHCR_TOKEN
-# ============================================
+  # ============================================
+  # STAGE 3: DEPLOY TO DEVELOPMENT (Local K8s)
+  # ============================================
+  # Note: For local Docker Desktop K8s, this outputs instructions
+  # since GitHub Actions cannot reach local environments.
+  # Use self-hosted runner for automatic local deployment.
+  # ============================================
+  deploy-dev:
+    name: Deploy to Development
+    runs-on: ubuntu-latest
+    needs: push
+    if: github.ref == 'refs/heads/develop' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'development'))
+    environment: development
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate Deployment Instructions
+        run: |
+          echo "## 🚀 Development Deployment Ready" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Images have been pushed to GHCR with tag: **${{ needs.push.outputs.image_tag }}**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Deploy to Local Kubernetes (Docker Desktop)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Run these commands on your local machine:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`powershell" >> $GITHUB_STEP_SUMMARY
+          echo "# Navigate to project directory" >> $GITHUB_STEP_SUMMARY
+          echo "cd payflow" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Pull latest code" >> $GITHUB_STEP_SUMMARY
+          echo "git pull origin develop" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Apply k8s manifests (if new services added)" >> $GITHUB_STEP_SUMMARY
+          echo "kubectl apply -f k8s/namespace.yaml" >> $GITHUB_STEP_SUMMARY
+          echo "kubectl apply -f k8s/configmaps/" >> $GITHUB_STEP_SUMMARY
+          echo "kubectl apply -f k8s/secrets/" >> $GITHUB_STEP_SUMMARY
+          echo "kubectl apply -f k8s/deployments/" >> $GITHUB_STEP_SUMMARY
+          echo "kubectl apply -f k8s/services/" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Rollout restart to pull new images" >> $GITHUB_STEP_SUMMARY
+          echo "kubectl rollout restart deployment -n payflow" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Verify rollout" >> $GITHUB_STEP_SUMMARY
+          echo "kubectl rollout status deployment -n payflow" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Check all pods" >> $GITHUB_STEP_SUMMARY
+          echo "kubectl get pods -n payflow" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔄 Or use the deployment script:" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`powershell" >> $GITHUB_STEP_SUMMARY
+          echo "./deploy-k8s.ps1 -Environment dev" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================
+  # STAGE 4: DEPLOY TO PRODUCTION (AWS)
+  # ============================================
+  # This stage deploys to AWS EC2 via SSH
+  # Required secrets:
+  #   - AWS_HOST: EC2 public IP or hostname
+  #   - AWS_SSH_KEY: Private SSH key for EC2
+  #   - AWS_USER: SSH username (default: ubuntu)
+  # ============================================
+  deploy-prod:
+    name: Deploy to Production (AWS)
+    runs-on: ubuntu-latest
+    needs: push
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production'))
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.AWS_SSH_KEY }}" > ~/.ssh/payflow-key.pem
+          chmod 600 ~/.ssh/payflow-key.pem
+          ssh-keyscan -H ${{ secrets.AWS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Deploy to AWS EC2
+        env:
+          AWS_HOST: ${{ secrets.AWS_HOST }}
+          AWS_USER: ${{ secrets.AWS_USER || 'ubuntu' }}
+          IMAGE_TAG: ${{ needs.push.outputs.image_tag }}
+        run: |
+          # Copy k8s manifests to server
+          scp -i ~/.ssh/payflow-key.pem -r k8s/ $AWS_USER@$AWS_HOST:~/payflow/
+          
+          # Execute deployment commands on AWS
+          ssh -i ~/.ssh/payflow-key.pem $AWS_USER@$AWS_HOST << 'DEPLOY_SCRIPT'
+            set -e
+            echo "🚀 Starting deployment to production..."
+            
+            cd ~/payflow
+            
+            # Pull latest code
+            git pull origin main || true
+            
+            # Login to GHCR (using saved credentials)
+            echo "📦 Logging into GHCR..."
+            
+            # Apply all k8s manifests
+            echo "📋 Applying Kubernetes manifests..."
+            kubectl apply -f k8s/namespace.yaml
+            kubectl apply -f k8s/configmaps/
+            kubectl apply -f k8s/secrets/
+            kubectl apply -f k8s/deployments/
+            kubectl apply -f k8s/services/
+            
+            # Rollout restart all deployments to pull new images
+            echo "🔄 Rolling out new images..."
+            kubectl rollout restart deployment/frontend -n payflow
+            kubectl rollout restart deployment/api-gateway -n payflow
+            kubectl rollout restart deployment/account-service -n payflow
+            kubectl rollout restart deployment/transaction-service -n payflow
+            kubectl rollout restart deployment/notification-service -n payflow
+            
+            # Wait for rollouts to complete
+            echo "⏳ Waiting for rollouts to complete..."
+            kubectl rollout status deployment/frontend -n payflow --timeout=120s
+            kubectl rollout status deployment/api-gateway -n payflow --timeout=120s
+            kubectl rollout status deployment/account-service -n payflow --timeout=120s
+            kubectl rollout status deployment/transaction-service -n payflow --timeout=120s
+            kubectl rollout status deployment/notification-service -n payflow --timeout=120s
+            
+            # Show final status
+            echo "✅ Deployment complete! Pod status:"
+            kubectl get pods -n payflow
+            
+          DEPLOY_SCRIPT
+
+      - name: Deployment Summary
+        run: |
+          echo "## 🎉 Production Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Detail | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | **Production (AWS)** |" >> $GITHUB_STEP_SUMMARY
+          echo "| Image Tag | \`${{ needs.push.outputs.image_tag }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${{ needs.push.outputs.sha_short }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deployed At | $(date -u +'%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔗 Access URLs" >> $GITHUB_STEP_SUMMARY
+          echo "- Frontend: http://${{ secrets.AWS_HOST }}/" >> $GITHUB_STEP_SUMMARY
+          echo "- API Gateway: http://${{ secrets.AWS_HOST }}:8080/" >> $GITHUB_STEP_SUMMARY
+
+      - name: Cleanup SSH Key
+        if: always()
+        run: |
+          rm -f ~/.ssh/payflow-key.pem
+
+  # ============================================
+  # NOTIFICATION JOB (Optional)
+  # ============================================
+  notify:
+    name: Notify Deployment Status
+    runs-on: ubuntu-latest
+    needs: [push, deploy-prod]
+    if: always() && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Check deployment status
+        run: |
+          if [ "${{ needs.deploy-prod.result }}" == "success" ]; then
+            echo "✅ Deployment succeeded!"
+          else
+            echo "❌ Deployment failed or was skipped"
+            exit 1
+          fi
