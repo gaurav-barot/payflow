@@ -1,0 +1,25 @@
+# Grafana Datasource Configuration
+# Pre-configures Prometheus as default data source
+# Works on: Local (Docker Desktop) and Production (AWS K3s)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: payflow
+  labels:
+    app: grafana
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        uid: PBFA97CFB590B2093
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+        editable: true
+        jsonData:
+          timeInterval: "15s"
+          httpMethod: "POST"
+

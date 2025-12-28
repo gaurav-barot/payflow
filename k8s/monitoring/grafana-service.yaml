@@ -1,0 +1,19 @@
+# Grafana Service
+# Works on: Local (Docker Desktop) and Production (AWS K3s)
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: payflow
+  labels:
+    app: grafana
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+      protocol: TCP
+  selector:
+    app: grafana
+

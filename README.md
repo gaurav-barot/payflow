@@ -49,6 +49,14 @@
 │      │  Topics: transaction-initiated, debit-completed, credit-completed│   │
 │      └──────────────────────────────────────────────────────────────────┘   │
 │                                                                              │
+│      ┌──────────────────────────────────────────────────────────────────┐   │
+│      │                      MONITORING STACK                             │   │
+│      │  ┌─────────────┐     ┌─────────────┐                             │   │
+│      │  │ Prometheus  │────►│   Grafana   │                             │   │
+│      │  │   :9090     │     │   :3000     │                             │   │
+│      │  └─────────────┘     └─────────────┘                             │   │
+│      └──────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 Request Flow:
@@ -68,7 +76,45 @@ Request Flow:
 | **Orchestration** | Kubernetes (Docker Desktop / K3s) |
 | **CI/CD** | GitHub Actions with selective builds |
 | **Registry** | GitHub Container Registry (GHCR) |
-| **Monitoring** | Prometheus, Grafana *(coming soon)* |
+| **Monitoring** | Prometheus + Grafana |
+
+## 📊 Monitoring Dashboard
+
+The PayFlow platform includes a comprehensive **Grafana dashboard** for real-time monitoring:
+
+![Grafana Dashboard](docs/images/grafana-dashboard.png)
+
+### Dashboard Sections
+
+| Section | Metrics | Purpose |
+|---------|---------|---------|
+| **System Overview** | Services Up, CPU %, RAM, Errors, Latency, Threads | Quick health check |
+| **Service Status** | UP/DOWN for each service | Individual service health |
+| **HTTP Metrics** | Request Rate, Response Time | API performance |
+| **Kafka Messaging** | Producer/Consumer Rate, Consumer Lag | Message queue health |
+| **Database Pool** | Active/Idle Connections, Pending, Acquire Time | HikariCP connection pool |
+| **JVM Metrics** | Heap Memory, Threads, GC Pause | Java runtime health |
+
+### Key Metrics Explained
+
+| Metric | Healthy Value | What It Means |
+|--------|--------------|---------------|
+| **Services Up** | 4 | All 4 Spring Boot services running |
+| **Avg CPU** | < 50% | System not overloaded |
+| **Errors (5m)** | 0 | No exceptions in last 5 minutes |
+| **Avg Latency** | < 100ms | Fast response times |
+| **Kafka Lag** | 0 | Messages processed immediately |
+| **DB Pending** | 0 | No threads waiting for DB connection |
+
+### Access Monitoring
+
+```powershell
+# Start Grafana port-forward
+kubectl port-forward svc/grafana 30000:3000 -n payflow
+
+# Open http://localhost:30000
+# Login: admin / payflow123
+```
 
 ## 📁 Project Structure
 
@@ -91,7 +137,10 @@ payflow/
 │   ├── deployments/         # All service deployments
 │   ├── services/            # ClusterIP services
 │   ├── configmaps/          # Configuration
-│   └── secrets/             # Sensitive data
+│   ├── secrets/             # Sensitive data
+│   └── monitoring/          # Prometheus & Grafana
+│       ├── prometheus-*.yaml
+│       └── grafana-*.yaml
 ├── .github/workflows/       # CI/CD Pipeline
 │   └── ci-cd.yml            # Selective build & deploy
 ├── docs/images/             # Screenshots and documentation images
@@ -175,7 +224,7 @@ cd payflow
 # Deploy to Kubernetes
 ./deploy-k8s.ps1 -Environment dev
 
-# Access the application
+# Start port-forwarding
 kubectl port-forward svc/frontend 8000:80 -n payflow
 
 # Open http://localhost:8000
@@ -186,6 +235,18 @@ kubectl port-forward svc/frontend 8000:80 -n payflow
 ```bash
 docker-compose up -d
 # Open http://localhost:3000
+```
+
+### Access Monitoring
+
+```powershell
+# Grafana Dashboard
+kubectl port-forward svc/grafana 30000:3000 -n payflow
+# Open http://localhost:30000 (admin/payflow123)
+
+# Prometheus (Direct)
+kubectl port-forward svc/prometheus 9090:9090 -n payflow
+# Open http://localhost:9090
 ```
 
 ## 🔄 CI/CD Pipeline
@@ -250,6 +311,8 @@ All API requests go through `http://localhost:8000/api/` (proxied by Nginx)
 - ✅ **API Gateway** - Spring Cloud Gateway routing
 - ✅ **Health Checks** - Kubernetes probes configured
 - ✅ **GitOps Ready** - GHCR images, k8s manifests
+- ✅ **Prometheus Monitoring** - Metrics collection from all services
+- ✅ **Grafana Dashboard** - Real-time visualization
 
 ## 🖥️ Local Development
 
@@ -277,12 +340,11 @@ git pull origin develop
 
 ## 📊 Upcoming Features
 
-- [ ] Prometheus metrics collection
-- [ ] Grafana dashboards
 - [ ] User authentication (JWT)
-- [ ] Transaction notifications
+- [ ] Transaction notifications (email/SMS)
 - [ ] QR code payments
 - [ ] AWS Production deployment
+- [ ] Kubernetes Horizontal Pod Autoscaler
 
 ## 👥 Author
 
@@ -294,4 +356,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-*Built with ❤️ using Spring Boot, React, Kubernetes, Kafka, and Nginx*
+*Built with ❤️ using Spring Boot, React, Kubernetes, Kafka, Prometheus, Grafana, and Nginx*

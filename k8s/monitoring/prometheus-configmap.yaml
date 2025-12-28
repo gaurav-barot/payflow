@@ -1,0 +1,106 @@
+# Prometheus Configuration
+# Works on: Local (Docker Desktop) and Production (AWS K3s)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: payflow
+  labels:
+    app: prometheus
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s          # How often to scrape targets
+      evaluation_interval: 15s       # How often to evaluate rules
+      external_labels:
+        cluster: 'payflow-cluster'
+        env: 'development'
+
+    # Alerting configuration (optional - for future use)
+    alerting:
+      alertmanagers: []
+
+    # Scrape configurations
+    scrape_configs:
+      # Prometheus self-monitoring
+      - job_name: 'prometheus'
+        static_configs:
+          - targets: ['localhost:9090']
+        metrics_path: /metrics
+
+      # PayFlow API Gateway
+      - job_name: 'api-gateway'
+        metrics_path: /actuator/prometheus
+        static_configs:
+          - targets: ['api-gateway.payflow.svc.cluster.local:8080']
+        relabel_configs:
+          - source_labels: [__address__]
+            target_label: instance
+            replacement: 'api-gateway'
+
+      # PayFlow Account Service
+      - job_name: 'account-service'
+        metrics_path: /actuator/prometheus
+        static_configs:
+          - targets: ['account-service.payflow.svc.cluster.local:8081']
+        relabel_configs:
+          - source_labels: [__address__]
+            target_label: instance
+            replacement: 'account-service'
+
+      # PayFlow Transaction Service
+      - job_name: 'transaction-service'
+        metrics_path: /actuator/prometheus
+        static_configs:
+          - targets: ['transaction-service.payflow.svc.cluster.local:8082']
+        relabel_configs:
+          - source_labels: [__address__]
+            target_label: instance
+            replacement: 'transaction-service'
+
+      # PayFlow Notification Service
+      - job_name: 'notification-service'
+        metrics_path: /actuator/prometheus
+        static_configs:
+          - targets: ['notification-service.payflow.svc.cluster.local:8083']
+        relabel_configs:
+          - source_labels: [__address__]
+            target_label: instance
+            replacement: 'notification-service'
+
+      # Kubernetes Pods (auto-discovery) - discovers all pods with prometheus annotations
+      - job_name: 'kubernetes-pods'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - payflow
+        relabel_configs:
+          # Only scrape pods with annotation prometheus.io/scrape: "true"
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          # Use custom path if specified
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          # Use custom port if specified
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          # Add pod name as label
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: pod
+          # Add namespace as label
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: namespace
+          # Add app label
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: replace
+            target_label: app
+
