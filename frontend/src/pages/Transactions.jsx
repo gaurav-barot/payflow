@@ -38,8 +38,11 @@ function Transactions() {
     queryFn: () => accountApi.getAll(),
   });
 
-  const transactions = transactionsData?.data || [];
-  const accounts = accountsData?.data || [];
+  // Handle both direct array response and axios wrapped response
+  const transactionsRaw = transactionsData?.data ?? transactionsData;
+  const accountsRaw = accountsData?.data ?? accountsData;
+  const transactions = Array.isArray(transactionsRaw) ? transactionsRaw : [];
+  const accounts = Array.isArray(accountsRaw) ? accountsRaw : [];
 
   // Helper to get account holder name from account number
   const getAccountHolder = (accountNumber) => {

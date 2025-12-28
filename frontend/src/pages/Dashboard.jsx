@@ -38,8 +38,13 @@ function Dashboard() {
     queryFn: () => transactionApi.getAll(),
   });
 
-  const accounts = accountsData?.data || [];
-  const transactions = transactionsData?.data || [];
+  // Handle both direct array response and axios wrapped response
+  const accountsRaw = accountsData?.data ?? accountsData;
+  const transactionsRaw = transactionsData?.data ?? transactionsData;
+  
+  // Ensure we always have arrays
+  const accounts = Array.isArray(accountsRaw) ? accountsRaw : [];
+  const transactions = Array.isArray(transactionsRaw) ? transactionsRaw : [];
   
   const totalBalance = accounts.reduce((sum, acc) => sum + (acc.balance || 0), 0);
   const recentTransactions = transactions.slice(0, 5);

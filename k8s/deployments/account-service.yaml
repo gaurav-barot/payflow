@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: account-service
-        image: ghcr.io/saurabh3108/payflow/account-service:latest
+        image: ghcr.io/saurabh3108/payflow-account-service:develop
         ports:
         - containerPort: 8081
         envFrom:
@@ -27,21 +27,28 @@ spec:
             name: db-secret
         resources:
           requests:
-            memory: "128Mi"
-            cpu: "100m"
-          limits:
             memory: "256Mi"
             cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        startupProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8081
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          failureThreshold: 30
         livenessProbe:
           httpGet:
             path: /actuator/health
             port: 8081
-          initialDelaySeconds: 90
           periodSeconds: 10
+          failureThreshold: 3
         readinessProbe:
           httpGet:
             path: /actuator/health
             port: 8081
-          initialDelaySeconds: 60
           periodSeconds: 5
+          failureThreshold: 3
 

@@ -58,7 +58,9 @@ function Transfer() {
     }
   });
 
-  const accounts = accountsData?.data || [];
+  // Handle both direct array response and axios wrapped response
+  const accountsRaw = accountsData?.data ?? accountsData;
+  const accounts = Array.isArray(accountsRaw) ? accountsRaw : [];
   const selectedFromAccount = accounts.find(a => a.accountNumber === formData.fromAccountNumber);
 
   const handleSubmit = (e) => {

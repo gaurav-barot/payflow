@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: api-gateway
-        image: ghcr.io/saurabh3108/payflow/api-gateway:latest
+        image: ghcr.io/saurabh3108/payflow-api-gateway:develop
         ports:
         - containerPort: 8080
         envFrom:
@@ -25,21 +25,28 @@ spec:
             name: app-config
         resources:
           requests:
-            memory: "128Mi"
-            cpu: "100m"
-          limits:
             memory: "256Mi"
             cpu: "200m"
-        livenessProbe:
-          httpGet:
-            path: /actuator/health
-            port: 8080
-          initialDelaySeconds: 60
-          periodSeconds: 10
-        readinessProbe:
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        startupProbe:
           httpGet:
             path: /actuator/health
             port: 8080
           initialDelaySeconds: 30
+          periodSeconds: 10
+          failureThreshold: 30
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8080
+          periodSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8080
           periodSeconds: 5
+          failureThreshold: 3
 

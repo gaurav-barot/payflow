@@ -70,7 +70,9 @@ function Accounts() {
     }
   });
 
-  const accounts = accountsData?.data || [];
+  // Handle both direct array response and axios wrapped response
+  const accountsRaw = accountsData?.data ?? accountsData;
+  const accounts = Array.isArray(accountsRaw) ? accountsRaw : [];
 
   const handleSubmit = (e) => {
     e.preventDefault();
