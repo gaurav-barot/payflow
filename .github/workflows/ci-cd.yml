@@ -2,14 +2,12 @@
 # PayFlow CI/CD Pipeline
 # ============================================
 # Triggers:
-#   - Push to main branch → Build, Push to GHCR, Deploy to AWS (prod)
-#   - Push to develop branch → Build, Push to GHCR, Deploy to Local K8s
+#   - Push to main/develop branch → Build, Push to GHCR
 #   - Pull Request to main → Build only (validation)
 # ============================================
 # Features:
 #   - Selective builds: Only builds services with changes
-#   - Auto-deploy: Uses self-hosted runner for local deployment
-#   - Environment switching: dev (local) vs prod (AWS)
+#   - Environment switching: dev (local) vs prod (AWS) - AWS deploy disabled for now
 # ============================================
 
 name: PayFlow CI/CD
@@ -24,14 +22,6 @@ on:
       - main
   workflow_dispatch:
     inputs:
-      environment:
-        description: 'Deployment environment'
-        required: true
-        default: 'development'
-        type: choice
-        options:
-          - development
-          - production
       force_build_all:
         description: 'Force build all services'
         required: false
@@ -339,23 +329,23 @@ jobs:
           echo "| Frontend | ${{ (needs.changes.outputs.frontend == 'true' || github.event.inputs.force_build_all == 'true') && '✅ Pushed' || '⏭️ Skipped' }} | ${{ (needs.changes.outputs.frontend == 'true' || github.event.inputs.force_build_all == 'true') && format('{0}-frontend:{1}', env.IMAGE_PREFIX, steps.meta.outputs.TAG) || 'N/A' }} |" >> $GITHUB_STEP_SUMMARY
 
   # ============================================
-  # STAGE 3: DEPLOY TO LOCAL K8s (Development)
+  # STAGE 3: DEPLOYMENT SUMMARY
   # ============================================
   # Generates deployment commands for local K8s
-  # After pipeline completes, run the provided commands locally
+  # AWS deployment is disabled for now - will be enabled later
   # ============================================
-  deploy-dev:
-    name: Deploy to Development
+  deploy-summary:
+    name: Deployment Summary
     runs-on: ubuntu-latest
     needs: [changes, push]
-    if: github.ref == 'refs/heads/develop' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'development'))
-    environment: development
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
 
     steps:
       - name: Generate Deployment Commands
         run: |
-          echo "## 🚀 Development Deployment Ready" >> $GITHUB_STEP_SUMMARY
+          echo "## 🚀 Deployment Ready" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Images pushed to GHCR with tag:** \`${{ needs.push.outputs.image_tag }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 📦 Services Updated:" >> $GITHUB_STEP_SUMMARY
@@ -367,7 +357,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`powershell" >> $GITHUB_STEP_SUMMARY
           echo "# Navigate to project and pull latest" >> $GITHUB_STEP_SUMMARY
-          echo "cd payflow; git pull origin develop" >> $GITHUB_STEP_SUMMARY
+          echo "cd payflow; git pull origin ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "# Restart updated services to pull new images" >> $GITHUB_STEP_SUMMARY
           SERVICES="${{ needs.push.outputs.pushed_services }}"
@@ -386,87 +376,7 @@ jobs:
           echo "\`\`\`powershell" >> $GITHUB_STEP_SUMMARY
           echo "./deploy-k8s.ps1 -RolloutOnly" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-
-  # ============================================
-  # STAGE 4: DEPLOY TO PRODUCTION (AWS)
-  # ============================================
-  deploy-prod:
-    name: Deploy to Production (AWS)
-    runs-on: ubuntu-latest
-    needs: [changes, push]
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production'))
-    environment: production
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup SSH Key
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.AWS_SSH_KEY }}" > ~/.ssh/payflow-key.pem
-          chmod 600 ~/.ssh/payflow-key.pem
-          ssh-keyscan -H ${{ secrets.AWS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
-
-      - name: Deploy to AWS EC2
-        env:
-          AWS_HOST: ${{ secrets.AWS_HOST }}
-          AWS_USER: ${{ secrets.AWS_USER || 'ubuntu' }}
-          PUSHED_SERVICES: ${{ needs.push.outputs.pushed_services }}
-        run: |
-          # Copy k8s manifests to server
-          scp -i ~/.ssh/payflow-key.pem -r k8s/ $AWS_USER@$AWS_HOST:~/payflow/
-          
-          # Execute deployment commands on AWS
-          ssh -i ~/.ssh/payflow-key.pem $AWS_USER@$AWS_HOST << DEPLOY_SCRIPT
-            set -e
-            echo "🚀 Starting deployment to production..."
-            
-            cd ~/payflow
-            
-            # Pull latest code
-            git pull origin main || true
-            
-            # Apply all k8s manifests
-            echo "📋 Applying Kubernetes manifests..."
-            kubectl apply -f k8s/namespace.yaml
-            kubectl apply -f k8s/configmaps/
-            kubectl apply -f k8s/secrets/
-            kubectl apply -f k8s/deployments/
-            kubectl apply -f k8s/services/
-            
-            # Rollout only changed services
-            echo "🔄 Rolling out updated services..."
-            SERVICES="$PUSHED_SERVICES"
-            if [ -n "\$SERVICES" ]; then
-              IFS=',' read -ra SERVICE_ARRAY <<< "\$SERVICES"
-              for service in "\${SERVICE_ARRAY[@]}"; do
-                echo "Restarting \$service..."
-                kubectl rollout restart deployment/\$service -n payflow || true
-              done
-              
-              # Wait for rollouts
-              echo "⏳ Waiting for rollouts..."
-              for service in "\${SERVICE_ARRAY[@]}"; do
-                kubectl rollout status deployment/\$service -n payflow --timeout=120s || true
-              done
-            fi
-            
-            echo "✅ Deployment complete!"
-            kubectl get pods -n payflow
-          DEPLOY_SCRIPT
-
-      - name: Deployment Summary
-        run: |
-          echo "## 🎉 Production Deployment Complete" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Detail | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Environment | **Production (AWS)** |" >> $GITHUB_STEP_SUMMARY
-          echo "| Image Tag | \`${{ needs.push.outputs.image_tag }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Services Deployed | \`${{ needs.push.outputs.pushed_services }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Deployed At | $(date -u +'%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
-
-      - name: Cleanup SSH Key
-        if: always()
-        run: rm -f ~/.ssh/payflow-key.pem
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "> **Note:** AWS production deployment is disabled. Will be enabled after EC2 setup." >> $GITHUB_STEP_SUMMARY
