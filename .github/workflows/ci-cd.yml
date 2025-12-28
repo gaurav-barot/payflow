@@ -3,12 +3,13 @@
 # ============================================
 # Triggers:
 #   - Push to main branch → Build, Push to GHCR, Deploy to AWS (prod)
-#   - Push to develop branch → Build, Push to GHCR, Deploy to Dev
+#   - Push to develop branch → Build, Push to GHCR, Deploy to Local K8s
 #   - Pull Request to main → Build only (validation)
 # ============================================
-# Environments:
-#   - develop branch → Development environment
-#   - main branch → Production environment (AWS)
+# Features:
+#   - Selective builds: Only builds services with changes
+#   - Auto-deploy: Uses self-hosted runner for local deployment
+#   - Environment switching: dev (local) vs prod (AWS)
 # ============================================
 
 name: PayFlow CI/CD
@@ -21,7 +22,6 @@ on:
   pull_request:
     branches:
       - main
-  # Manual trigger for deployment
   workflow_dispatch:
     inputs:
       environment:
@@ -32,6 +32,11 @@ on:
         options:
           - development
           - production
+      force_build_all:
+        description: 'Force build all services'
+        required: false
+        default: false
+        type: boolean
 
 env:
   REGISTRY: ghcr.io
@@ -39,11 +44,81 @@ env:
 
 jobs:
   # ============================================
-  # STAGE 1: BUILD & TEST
+  # STAGE 0: DETECT CHANGES
+  # ============================================
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      api-gateway: ${{ steps.filter.outputs.api-gateway }}
+      account-service: ${{ steps.filter.outputs.account-service }}
+      transaction-service: ${{ steps.filter.outputs.transaction-service }}
+      notification-service: ${{ steps.filter.outputs.notification-service }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      k8s: ${{ steps.filter.outputs.k8s }}
+      any_service: ${{ steps.check.outputs.any_service }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Detect file changes
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            api-gateway:
+              - 'services/api-gateway/**'
+              - 'pom.xml'
+            account-service:
+              - 'services/account-service/**'
+              - 'pom.xml'
+            transaction-service:
+              - 'services/transaction-service/**'
+              - 'pom.xml'
+            notification-service:
+              - 'services/notification-service/**'
+              - 'pom.xml'
+            frontend:
+              - 'frontend/**'
+            k8s:
+              - 'k8s/**'
+
+      - name: Check if any service changed
+        id: check
+        run: |
+          if [ "${{ steps.filter.outputs.api-gateway }}" == "true" ] || \
+             [ "${{ steps.filter.outputs.account-service }}" == "true" ] || \
+             [ "${{ steps.filter.outputs.transaction-service }}" == "true" ] || \
+             [ "${{ steps.filter.outputs.notification-service }}" == "true" ] || \
+             [ "${{ steps.filter.outputs.frontend }}" == "true" ] || \
+             [ "${{ github.event.inputs.force_build_all }}" == "true" ]; then
+            echo "any_service=true" >> $GITHUB_OUTPUT
+          else
+            echo "any_service=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Summary of changes
+        run: |
+          echo "## 🔍 Change Detection Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | Changed |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| API Gateway | ${{ steps.filter.outputs.api-gateway == 'true' && '✅ Yes' || '⏭️ No' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Account Service | ${{ steps.filter.outputs.account-service == 'true' && '✅ Yes' || '⏭️ No' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Transaction Service | ${{ steps.filter.outputs.transaction-service == 'true' && '✅ Yes' || '⏭️ No' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Notification Service | ${{ steps.filter.outputs.notification-service == 'true' && '✅ Yes' || '⏭️ No' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Frontend | ${{ steps.filter.outputs.frontend == 'true' && '✅ Yes' || '⏭️ No' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| K8s Manifests | ${{ steps.filter.outputs.k8s == 'true' && '✅ Yes' || '⏭️ No' }} |" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================
+  # STAGE 1: BUILD & TEST (Selective)
   # ============================================
   build:
     name: Build & Test
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.any_service == 'true' || github.event.inputs.force_build_all == 'true'
     
     steps:
       - name: Checkout code
@@ -51,30 +126,72 @@ jobs:
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
+        if: needs.changes.outputs.api-gateway == 'true' || needs.changes.outputs.account-service == 'true' || needs.changes.outputs.transaction-service == 'true' || needs.changes.outputs.notification-service == 'true' || github.event.inputs.force_build_all == 'true'
         with:
           java-version: '21'
           distribution: 'temurin'
           cache: maven
 
-      - name: Build with Maven
-        run: mvn clean package -DskipTests
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build Docker images (validation)
+      - name: Build API Gateway
+        if: needs.changes.outputs.api-gateway == 'true' || github.event.inputs.force_build_all == 'true'
         run: |
-          docker compose build --no-cache
+          echo "🔨 Building API Gateway..."
+          mvn clean package -DskipTests -pl services/api-gateway -am
+
+      - name: Build Account Service
+        if: needs.changes.outputs.account-service == 'true' || github.event.inputs.force_build_all == 'true'
+        run: |
+          echo "🔨 Building Account Service..."
+          mvn clean package -DskipTests -pl services/account-service -am
+
+      - name: Build Transaction Service
+        if: needs.changes.outputs.transaction-service == 'true' || github.event.inputs.force_build_all == 'true'
+        run: |
+          echo "🔨 Building Transaction Service..."
+          mvn clean package -DskipTests -pl services/transaction-service -am
+
+      - name: Build Notification Service
+        if: needs.changes.outputs.notification-service == 'true' || github.event.inputs.force_build_all == 'true'
+        run: |
+          echo "🔨 Building Notification Service..."
+          mvn clean package -DskipTests -pl services/notification-service -am
+
+      - name: Set up Node.js for Frontend
+        if: needs.changes.outputs.frontend == 'true' || github.event.inputs.force_build_all == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build Frontend
+        if: needs.changes.outputs.frontend == 'true' || github.event.inputs.force_build_all == 'true'
+        run: |
+          echo "🔨 Building Frontend..."
+          cd frontend
+          npm ci
+          npm run build
+
+      - name: Build Summary
+        run: |
+          echo "## 🔨 Build Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| API Gateway | ${{ (needs.changes.outputs.api-gateway == 'true' || github.event.inputs.force_build_all == 'true') && '✅ Built' || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Account Service | ${{ (needs.changes.outputs.account-service == 'true' || github.event.inputs.force_build_all == 'true') && '✅ Built' || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Transaction Service | ${{ (needs.changes.outputs.transaction-service == 'true' || github.event.inputs.force_build_all == 'true') && '✅ Built' || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Notification Service | ${{ (needs.changes.outputs.notification-service == 'true' || github.event.inputs.force_build_all == 'true') && '✅ Built' || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Frontend | ${{ (needs.changes.outputs.frontend == 'true' || github.event.inputs.force_build_all == 'true') && '✅ Built' || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
 
   # ============================================
-  # STAGE 2: PUSH TO GHCR
+  # STAGE 2: PUSH TO GHCR (Selective)
   # ============================================
   push:
     name: Push to GHCR
     runs-on: ubuntu-latest
-    needs: build
-    # Only push on main or develop branch (not on PRs)
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: [changes, build]
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.changes.outputs.any_service == 'true'
     
     permissions:
       contents: read
@@ -83,6 +200,7 @@ jobs:
     outputs:
       image_tag: ${{ steps.meta.outputs.TAG }}
       sha_short: ${{ steps.meta.outputs.SHA_SHORT }}
+      pushed_services: ${{ steps.pushed.outputs.services }}
 
     steps:
       - name: Checkout code
@@ -95,7 +213,7 @@ jobs:
           distribution: 'temurin'
           cache: maven
 
-      - name: Build with Maven
+      - name: Build all Java services
         run: mvn clean package -DskipTests
 
       - name: Set up Docker Buildx
@@ -108,10 +226,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels)
+      - name: Extract metadata
         id: meta
         run: |
-          # Determine tag based on branch
           if [ "${{ github.ref }}" == "refs/heads/main" ]; then
             echo "TAG=latest" >> $GITHUB_OUTPUT
           elif [ "${{ github.ref }}" == "refs/heads/develop" ]; then
@@ -122,6 +239,7 @@ jobs:
           echo "SHA_SHORT=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
 
       - name: Build and Push API Gateway
+        if: needs.changes.outputs.api-gateway == 'true' || github.event.inputs.force_build_all == 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -134,6 +252,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build and Push Account Service
+        if: needs.changes.outputs.account-service == 'true' || github.event.inputs.force_build_all == 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -146,6 +265,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build and Push Transaction Service
+        if: needs.changes.outputs.transaction-service == 'true' || github.event.inputs.force_build_all == 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -158,6 +278,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build and Push Notification Service
+        if: needs.changes.outputs.notification-service == 'true' || github.event.inputs.force_build_all == 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -170,6 +291,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build and Push Frontend
+        if: needs.changes.outputs.frontend == 'true' || github.event.inputs.force_build_all == 'true'
         uses: docker/build-push-action@v5
         with:
           context: ./frontend
@@ -181,29 +303,51 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Summary
+      - name: Track pushed services
+        id: pushed
+        run: |
+          SERVICES=""
+          if [ "${{ needs.changes.outputs.api-gateway }}" == "true" ] || [ "${{ github.event.inputs.force_build_all }}" == "true" ]; then
+            SERVICES="${SERVICES}api-gateway,"
+          fi
+          if [ "${{ needs.changes.outputs.account-service }}" == "true" ] || [ "${{ github.event.inputs.force_build_all }}" == "true" ]; then
+            SERVICES="${SERVICES}account-service,"
+          fi
+          if [ "${{ needs.changes.outputs.transaction-service }}" == "true" ] || [ "${{ github.event.inputs.force_build_all }}" == "true" ]; then
+            SERVICES="${SERVICES}transaction-service,"
+          fi
+          if [ "${{ needs.changes.outputs.notification-service }}" == "true" ] || [ "${{ github.event.inputs.force_build_all }}" == "true" ]; then
+            SERVICES="${SERVICES}notification-service,"
+          fi
+          if [ "${{ needs.changes.outputs.frontend }}" == "true" ] || [ "${{ github.event.inputs.force_build_all }}" == "true" ]; then
+            SERVICES="${SERVICES}frontend,"
+          fi
+          echo "services=${SERVICES%,}" >> $GITHUB_OUTPUT
+
+      - name: Push Summary
         run: |
           echo "## 🐳 Images Pushed to GHCR" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Service | Image |" >> $GITHUB_STEP_SUMMARY
-          echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| API Gateway | \`${{ env.IMAGE_PREFIX }}-api-gateway:${{ steps.meta.outputs.TAG }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Account Service | \`${{ env.IMAGE_PREFIX }}-account-service:${{ steps.meta.outputs.TAG }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Transaction Service | \`${{ env.IMAGE_PREFIX }}-transaction-service:${{ steps.meta.outputs.TAG }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Notification Service | \`${{ env.IMAGE_PREFIX }}-notification-service:${{ steps.meta.outputs.TAG }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Frontend | \`${{ env.IMAGE_PREFIX }}-frontend:${{ steps.meta.outputs.TAG }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "**Tag:** \`${{ steps.meta.outputs.TAG }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | Status | Image |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| API Gateway | ${{ (needs.changes.outputs.api-gateway == 'true' || github.event.inputs.force_build_all == 'true') && '✅ Pushed' || '⏭️ Skipped' }} | ${{ (needs.changes.outputs.api-gateway == 'true' || github.event.inputs.force_build_all == 'true') && format('{0}-api-gateway:{1}', env.IMAGE_PREFIX, steps.meta.outputs.TAG) || 'N/A' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Account Service | ${{ (needs.changes.outputs.account-service == 'true' || github.event.inputs.force_build_all == 'true') && '✅ Pushed' || '⏭️ Skipped' }} | ${{ (needs.changes.outputs.account-service == 'true' || github.event.inputs.force_build_all == 'true') && format('{0}-account-service:{1}', env.IMAGE_PREFIX, steps.meta.outputs.TAG) || 'N/A' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Transaction Service | ${{ (needs.changes.outputs.transaction-service == 'true' || github.event.inputs.force_build_all == 'true') && '✅ Pushed' || '⏭️ Skipped' }} | ${{ (needs.changes.outputs.transaction-service == 'true' || github.event.inputs.force_build_all == 'true') && format('{0}-transaction-service:{1}', env.IMAGE_PREFIX, steps.meta.outputs.TAG) || 'N/A' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Notification Service | ${{ (needs.changes.outputs.notification-service == 'true' || github.event.inputs.force_build_all == 'true') && '✅ Pushed' || '⏭️ Skipped' }} | ${{ (needs.changes.outputs.notification-service == 'true' || github.event.inputs.force_build_all == 'true') && format('{0}-notification-service:{1}', env.IMAGE_PREFIX, steps.meta.outputs.TAG) || 'N/A' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Frontend | ${{ (needs.changes.outputs.frontend == 'true' || github.event.inputs.force_build_all == 'true') && '✅ Pushed' || '⏭️ Skipped' }} | ${{ (needs.changes.outputs.frontend == 'true' || github.event.inputs.force_build_all == 'true') && format('{0}-frontend:{1}', env.IMAGE_PREFIX, steps.meta.outputs.TAG) || 'N/A' }} |" >> $GITHUB_STEP_SUMMARY
 
   # ============================================
-  # STAGE 3: DEPLOY TO DEVELOPMENT (Local K8s)
+  # STAGE 3: DEPLOY TO LOCAL K8s (Self-hosted Runner)
   # ============================================
-  # Note: For local Docker Desktop K8s, this outputs instructions
-  # since GitHub Actions cannot reach local environments.
-  # Use self-hosted runner for automatic local deployment.
+  # This job runs on a self-hosted runner on your local machine
+  # To set up: GitHub Repo → Settings → Actions → Runners → New self-hosted runner
   # ============================================
-  deploy-dev:
-    name: Deploy to Development
-    runs-on: ubuntu-latest
-    needs: push
+  deploy-local:
+    name: Deploy to Local K8s
+    runs-on: self-hosted  # Runs on your local machine
+    needs: [changes, push]
     if: github.ref == 'refs/heads/develop' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'development'))
     environment: development
 
@@ -211,58 +355,116 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Verify kubectl access
+        run: |
+          echo "🔍 Checking Kubernetes cluster..."
+          kubectl cluster-info
+          kubectl config current-context
+
+      - name: Apply K8s manifests (if changed)
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          echo "📋 Applying Kubernetes manifests..."
+          kubectl apply -f k8s/namespace.yaml
+          kubectl apply -f k8s/configmaps/
+          kubectl apply -f k8s/secrets/
+          kubectl apply -f k8s/deployments/
+          kubectl apply -f k8s/services/
+
+      - name: Rollout changed services
+        run: |
+          echo "🔄 Rolling out updated services..."
+          SERVICES="${{ needs.push.outputs.pushed_services }}"
+          
+          if [ -z "$SERVICES" ]; then
+            echo "No services to rollout"
+            exit 0
+          fi
+          
+          IFS=',' read -ra SERVICE_ARRAY <<< "$SERVICES"
+          for service in "${SERVICE_ARRAY[@]}"; do
+            echo "Restarting $service..."
+            kubectl rollout restart deployment/$service -n payflow || true
+          done
+
+      - name: Wait for rollouts
+        run: |
+          echo "⏳ Waiting for rollouts to complete..."
+          SERVICES="${{ needs.push.outputs.pushed_services }}"
+          
+          if [ -z "$SERVICES" ]; then
+            exit 0
+          fi
+          
+          IFS=',' read -ra SERVICE_ARRAY <<< "$SERVICES"
+          for service in "${SERVICE_ARRAY[@]}"; do
+            echo "Waiting for $service..."
+            kubectl rollout status deployment/$service -n payflow --timeout=120s || true
+          done
+
+      - name: Show deployment status
+        run: |
+          echo "✅ Deployment complete!"
+          echo ""
+          echo "Pod Status:"
+          kubectl get pods -n payflow -o wide
+          echo ""
+          echo "Service Status:"
+          kubectl get svc -n payflow
+
+      - name: Deployment Summary
+        run: |
+          echo "## 🚀 Local Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** Development (Local K8s)" >> $GITHUB_STEP_SUMMARY
+          echo "**Image Tag:** \`${{ needs.push.outputs.image_tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Deployed Services:" >> $GITHUB_STEP_SUMMARY
+          echo "\`${{ needs.push.outputs.pushed_services }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Access:" >> $GITHUB_STEP_SUMMARY
+          echo "Run: \`kubectl port-forward svc/frontend 8000:80 -n payflow\`" >> $GITHUB_STEP_SUMMARY
+          echo "Then open: http://localhost:8000" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================
+  # STAGE 3-ALT: DEPLOY INSTRUCTIONS (if no self-hosted runner)
+  # ============================================
+  deploy-local-instructions:
+    name: Deploy Instructions (No Runner)
+    runs-on: ubuntu-latest
+    needs: [changes, push]
+    if: github.ref == 'refs/heads/develop' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'development'))
+    # This job only runs if deploy-local fails or is skipped
+    continue-on-error: true
+
+    steps:
       - name: Generate Deployment Instructions
         run: |
-          echo "## 🚀 Development Deployment Ready" >> $GITHUB_STEP_SUMMARY
+          echo "## 📋 Manual Deployment Required" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Images have been pushed to GHCR with tag: **${{ needs.push.outputs.image_tag }}**" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📋 Deploy to Local Kubernetes (Docker Desktop)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Run these commands on your local machine:" >> $GITHUB_STEP_SUMMARY
+          echo "**No self-hosted runner detected.** Run these commands locally:" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`powershell" >> $GITHUB_STEP_SUMMARY
-          echo "# Navigate to project directory" >> $GITHUB_STEP_SUMMARY
-          echo "cd payflow" >> $GITHUB_STEP_SUMMARY
+          echo "# Quick deploy (restarts only changed services)" >> $GITHUB_STEP_SUMMARY
+          echo "./deploy-k8s.ps1 -RolloutOnly" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "# Pull latest code" >> $GITHUB_STEP_SUMMARY
-          echo "git pull origin develop" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "# Apply k8s manifests (if new services added)" >> $GITHUB_STEP_SUMMARY
-          echo "kubectl apply -f k8s/namespace.yaml" >> $GITHUB_STEP_SUMMARY
-          echo "kubectl apply -f k8s/configmaps/" >> $GITHUB_STEP_SUMMARY
-          echo "kubectl apply -f k8s/secrets/" >> $GITHUB_STEP_SUMMARY
-          echo "kubectl apply -f k8s/deployments/" >> $GITHUB_STEP_SUMMARY
-          echo "kubectl apply -f k8s/services/" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "# Rollout restart to pull new images" >> $GITHUB_STEP_SUMMARY
-          echo "kubectl rollout restart deployment -n payflow" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "# Verify rollout" >> $GITHUB_STEP_SUMMARY
-          echo "kubectl rollout status deployment -n payflow" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "# Check all pods" >> $GITHUB_STEP_SUMMARY
-          echo "kubectl get pods -n payflow" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🔄 Or use the deployment script:" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`powershell" >> $GITHUB_STEP_SUMMARY
-          echo "./deploy-k8s.ps1 -Environment dev" >> $GITHUB_STEP_SUMMARY
+          echo "# Or restart specific services:" >> $GITHUB_STEP_SUMMARY
+          SERVICES="${{ needs.push.outputs.pushed_services }}"
+          if [ -n "$SERVICES" ]; then
+            IFS=',' read -ra SERVICE_ARRAY <<< "$SERVICES"
+            for service in "${SERVICE_ARRAY[@]}"; do
+              echo "kubectl rollout restart deployment/$service -n payflow" >> $GITHUB_STEP_SUMMARY
+            done
+          fi
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
   # ============================================
   # STAGE 4: DEPLOY TO PRODUCTION (AWS)
   # ============================================
-  # This stage deploys to AWS EC2 via SSH
-  # Required secrets:
-  #   - AWS_HOST: EC2 public IP or hostname
-  #   - AWS_SSH_KEY: Private SSH key for EC2
-  #   - AWS_USER: SSH username (default: ubuntu)
-  # ============================================
   deploy-prod:
     name: Deploy to Production (AWS)
     runs-on: ubuntu-latest
-    needs: push
+    needs: [changes, push]
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production'))
     environment: production
 
@@ -281,13 +483,13 @@ jobs:
         env:
           AWS_HOST: ${{ secrets.AWS_HOST }}
           AWS_USER: ${{ secrets.AWS_USER || 'ubuntu' }}
-          IMAGE_TAG: ${{ needs.push.outputs.image_tag }}
+          PUSHED_SERVICES: ${{ needs.push.outputs.pushed_services }}
         run: |
           # Copy k8s manifests to server
           scp -i ~/.ssh/payflow-key.pem -r k8s/ $AWS_USER@$AWS_HOST:~/payflow/
           
           # Execute deployment commands on AWS
-          ssh -i ~/.ssh/payflow-key.pem $AWS_USER@$AWS_HOST << 'DEPLOY_SCRIPT'
+          ssh -i ~/.ssh/payflow-key.pem $AWS_USER@$AWS_HOST << DEPLOY_SCRIPT
             set -e
             echo "🚀 Starting deployment to production..."
             
@@ -295,9 +497,6 @@ jobs:
             
             # Pull latest code
             git pull origin main || true
-            
-            # Login to GHCR (using saved credentials)
-            echo "📦 Logging into GHCR..."
             
             # Apply all k8s manifests
             echo "📋 Applying Kubernetes manifests..."
@@ -307,26 +506,25 @@ jobs:
             kubectl apply -f k8s/deployments/
             kubectl apply -f k8s/services/
             
-            # Rollout restart all deployments to pull new images
-            echo "🔄 Rolling out new images..."
-            kubectl rollout restart deployment/frontend -n payflow
-            kubectl rollout restart deployment/api-gateway -n payflow
-            kubectl rollout restart deployment/account-service -n payflow
-            kubectl rollout restart deployment/transaction-service -n payflow
-            kubectl rollout restart deployment/notification-service -n payflow
+            # Rollout only changed services
+            echo "🔄 Rolling out updated services..."
+            SERVICES="$PUSHED_SERVICES"
+            if [ -n "\$SERVICES" ]; then
+              IFS=',' read -ra SERVICE_ARRAY <<< "\$SERVICES"
+              for service in "\${SERVICE_ARRAY[@]}"; do
+                echo "Restarting \$service..."
+                kubectl rollout restart deployment/\$service -n payflow || true
+              done
+              
+              # Wait for rollouts
+              echo "⏳ Waiting for rollouts..."
+              for service in "\${SERVICE_ARRAY[@]}"; do
+                kubectl rollout status deployment/\$service -n payflow --timeout=120s || true
+              done
+            fi
             
-            # Wait for rollouts to complete
-            echo "⏳ Waiting for rollouts to complete..."
-            kubectl rollout status deployment/frontend -n payflow --timeout=120s
-            kubectl rollout status deployment/api-gateway -n payflow --timeout=120s
-            kubectl rollout status deployment/account-service -n payflow --timeout=120s
-            kubectl rollout status deployment/transaction-service -n payflow --timeout=120s
-            kubectl rollout status deployment/notification-service -n payflow --timeout=120s
-            
-            # Show final status
-            echo "✅ Deployment complete! Pod status:"
+            echo "✅ Deployment complete!"
             kubectl get pods -n payflow
-            
           DEPLOY_SCRIPT
 
       - name: Deployment Summary
@@ -337,33 +535,9 @@ jobs:
           echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Environment | **Production (AWS)** |" >> $GITHUB_STEP_SUMMARY
           echo "| Image Tag | \`${{ needs.push.outputs.image_tag }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Commit | \`${{ needs.push.outputs.sha_short }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Services Deployed | \`${{ needs.push.outputs.pushed_services }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Deployed At | $(date -u +'%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🔗 Access URLs" >> $GITHUB_STEP_SUMMARY
-          echo "- Frontend: http://${{ secrets.AWS_HOST }}/" >> $GITHUB_STEP_SUMMARY
-          echo "- API Gateway: http://${{ secrets.AWS_HOST }}:8080/" >> $GITHUB_STEP_SUMMARY
 
       - name: Cleanup SSH Key
         if: always()
-        run: |
-          rm -f ~/.ssh/payflow-key.pem
-
-  # ============================================
-  # NOTIFICATION JOB (Optional)
-  # ============================================
-  notify:
-    name: Notify Deployment Status
-    runs-on: ubuntu-latest
-    needs: [push, deploy-prod]
-    if: always() && github.ref == 'refs/heads/main'
-    
-    steps:
-      - name: Check deployment status
-        run: |
-          if [ "${{ needs.deploy-prod.result }}" == "success" ]; then
-            echo "✅ Deployment succeeded!"
-          else
-            echo "❌ Deployment failed or was skipped"
-            exit 1
-          fi
+        run: rm -f ~/.ssh/payflow-key.pem
