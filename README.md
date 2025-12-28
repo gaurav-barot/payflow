@@ -1,26 +1,39 @@
 # 💰 PayFlow - Digital Wallet & Payment Platform
 
-[![CI/CD Pipeline](https://github.com/saurabh3108/payflow/actions/workflows/ci-cd.yaml/badge.svg)](https://github.com/saurabh3108/payflow/actions/workflows/ci-cd.yaml)
+[![CI/CD Pipeline](https://github.com/saurabh3108/payflow/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/saurabh3108/payflow/actions/workflows/ci-cd.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> Real-time Digital Wallet and Payment Platform built with Microservices Architecture
+> Real-time Digital Wallet and Payment Platform built with Microservices Architecture, Kubernetes, and Event-Driven Design
+
+## 🎬 Demo
+
+![PayFlow Dashboard](https://via.placeholder.com/800x400?text=PayFlow+Dashboard)
 
 ## 🏗️ Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                              AWS EC2 / K3s                                   │
+│                         KUBERNETES CLUSTER                                   │
 │  ┌────────────────────────────────────────────────────────────────────────┐ │
+│  │                         payflow namespace                               │ │
 │  │                                                                         │ │
 │  │   ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐        │ │
 │  │   │ React   │ │ API     │ │ Account │ │ Txn     │ │ Notify  │        │ │
-│  │   │ UI      │ │ Gateway │ │ Service │ │ Service │ │ Service │        │ │
-│  │   │ :3000   │ │ :8080   │ │ :8081   │ │ :8082   │ │ :8083   │        │ │
-│  │   └─────────┘ └─────────┘ └─────────┘ └─────────┘ └─────────┘        │ │
-│  │                                                                         │ │
-│  │   ┌─────────┐ ┌──────────┐ ┌──────────┐ ┌─────────┐                   │ │
-│  │   │ Kafka   │ │PostgreSQL│ │Prometheus│ │ Grafana │                   │ │
-│  │   │ :9092   │ │ :5432    │ │ :9090    │ │ :3001   │                   │ │
-│  │   └─────────┘ └──────────┘ └──────────┘ └─────────┘                   │ │
+│  │   │ Frontend│ │ Gateway │ │ Service │ │ Service │ │ Service │        │ │
+│  │   │ :80     │ │ :8080   │ │ :8081   │ │ :8082   │ │ :8083   │        │ │
+│  │   └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘        │ │
+│  │        │           │           │           │           │              │ │
+│  │        └───────────┴───────────┴─────┬─────┴───────────┘              │ │
+│  │                                      │                                 │ │
+│  │                         ┌────────────┴────────────┐                   │ │
+│  │                         │         KAFKA           │                   │ │
+│  │                         │        (Events)         │                   │ │
+│  │                         └────────────┬────────────┘                   │ │
+│  │                                      │                                 │ │
+│  │                         ┌────────────┴────────────┐                   │ │
+│  │                         │      POSTGRESQL         │                   │ │
+│  │                         │       (Database)        │                   │ │
+│  │                         └─────────────────────────┘                   │ │
 │  │                                                                         │ │
 │  └────────────────────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -32,111 +45,173 @@
 |-------|------------|
 | **Backend** | Java 21, Spring Boot 3.2, Spring Cloud Gateway |
 | **Database** | PostgreSQL 15 |
-| **Messaging** | Apache Kafka 3.7 |
-| **Frontend** | React 18, TypeScript, Tailwind CSS |
+| **Messaging** | Apache Kafka 3.7 (KRaft mode) |
+| **Frontend** | React 18, Vite, Tailwind CSS, Framer Motion |
 | **Container** | Docker |
-| **Orchestration** | Kubernetes (K3s) |
-| **CI/CD** | GitHub Actions, GHCR |
-| **Monitoring** | Prometheus, Grafana |
+| **Orchestration** | Kubernetes (Docker Desktop / K3s) |
+| **CI/CD** | GitHub Actions with selective builds |
+| **Registry** | GitHub Container Registry (GHCR) |
+| **Monitoring** | Prometheus, Grafana *(coming soon)* |
 
 ## 📁 Project Structure
 
 ```
 payflow/
 ├── services/
-│   ├── api-gateway/          # API Gateway (Port 8080)
+│   ├── api-gateway/          # Spring Cloud Gateway (Port 8080)
 │   ├── account-service/      # Account Management (Port 8081)
 │   ├── transaction-service/  # Transaction Processing (Port 8082)
-│   └── notification-service/ # Notifications (Port 8083)
-├── frontend/                 # React Frontend
+│   └── notification-service/ # Kafka Event Consumer (Port 8083)
+├── frontend/                 # React + Vite + Tailwind
+│   ├── src/
+│   │   ├── pages/           # Dashboard, Accounts, Transfer, Transactions
+│   │   ├── components/      # Reusable UI components
+│   │   └── api/             # API client configuration
+│   └── nginx.conf           # Nginx config with API proxy
 ├── k8s/                      # Kubernetes Manifests
-│   ├── deployments/
-│   ├── services/
-│   ├── configmaps/
-│   ├── secrets/
-│   └── ingress/
-└── .github/workflows/        # CI/CD Pipeline
+│   ├── namespace.yaml
+│   ├── deployments/         # All service deployments
+│   ├── services/            # ClusterIP services
+│   ├── configmaps/          # Configuration
+│   └── secrets/             # Sensitive data
+├── .github/workflows/       # CI/CD Pipeline
+│   └── ci-cd.yml            # Selective build & deploy
+└── deploy-k8s.ps1           # Local deployment script
 ```
 
 ## 🚀 Quick Start
 
 ### Prerequisites
+
+- Docker Desktop with Kubernetes enabled
 - Java 21
 - Maven 3.8+
-- Docker
 - Node.js 20+
+- kubectl
 
-### Local Development
+### Option 1: Local Kubernetes (Recommended)
 
-```bash
+```powershell
 # Clone the repository
 git clone https://github.com/saurabh3108/payflow.git
 cd payflow
 
-# Build all services
-mvn clean package
+# Deploy to Kubernetes
+./deploy-k8s.ps1 -Environment dev
 
-# Run with Docker Compose (coming soon)
-docker-compose up -d
+# Access the application
+kubectl port-forward svc/frontend 8000:80 -n payflow
+
+# Open http://localhost:8000
 ```
 
-### Build Individual Service
+### Option 2: Docker Compose
 
 ```bash
-cd services/account-service
-mvn clean package
-java -jar target/account-service-1.0.0.jar
+docker-compose up -d
+# Open http://localhost:3000
+```
+
+## 🔄 CI/CD Pipeline
+
+Our pipeline features **selective builds** - only changed services are built and deployed:
+
+```
+┌──────────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
+│   DETECT     │──►│    BUILD     │──►│    PUSH      │──►│   DEPLOY     │
+│   CHANGES    │   │ (only changed)│   │  to GHCR    │   │  Commands    │
+└──────────────┘   └──────────────┘   └──────────────┘   └──────────────┘
+```
+
+| Branch | Image Tag | Action |
+|--------|-----------|--------|
+| `develop` | `:develop` | Build → Push → Show deploy commands |
+| `main` | `:latest` | Build → Push → Deploy to AWS (auto) |
+
+### After Push to `develop`:
+
+The pipeline summary shows exact commands to run:
+
+```powershell
+# Restart updated services
+kubectl rollout restart deployment/frontend -n payflow
+kubectl rollout restart deployment/account-service -n payflow
+
+# Verify
+kubectl get pods -n payflow
 ```
 
 ## 📨 API Endpoints
 
 ### Account Service (8081)
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/api/accounts` | Create account |
+| GET | `/api/accounts` | List all accounts |
 | GET | `/api/accounts/{id}` | Get account by ID |
 | GET | `/api/accounts/number/{num}` | Get by account number |
-| PUT | `/api/accounts/balance` | Update balance |
 
 ### Transaction Service (8082)
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/api/transactions` | Initiate transfer |
-| GET | `/api/transactions/{id}` | Get transaction |
-| GET | `/api/transactions/account/{num}` | Get by account |
-
-## 🔄 Kafka Topics
-
-| Topic | Producer | Consumer |
-|-------|----------|----------|
-| `transaction-initiated` | Transaction Service | Account Service |
-| `debit-completed` | Account Service | Transaction Service |
-| `credit-completed` | Account Service | Transaction Service |
-| `transaction-completed` | Transaction Service | Notification Service |
+| GET | `/api/transactions` | List all transactions |
+| GET | `/api/transactions/{id}` | Get transaction by ID |
+| GET | `/api/transactions/account/{num}` | Get by account number |
 
 ## 🔧 Key Features
 
-- ✅ **Microservices Architecture** - 4 independent services
+- ✅ **Microservices Architecture** - 5 independent services
 - ✅ **Event-Driven** - Kafka for async communication
-- ✅ **Multi-threading** - ThreadPoolExecutor for concurrent processing
-- ✅ **Spring AOP** - Logging & Audit aspects
-- ✅ **Transaction Management** - @Transactional with pessimistic locking
-- ✅ **API Documentation** - Swagger UI (OpenAPI 3)
-- ✅ **Health Checks** - Spring Actuator
-- ✅ **Metrics** - Prometheus + Grafana
-- ✅ **CI/CD** - GitHub Actions → GHCR → K3s
+- ✅ **Kubernetes Native** - Full k8s deployment manifests
+- ✅ **Selective CI/CD** - Only builds changed services
+- ✅ **Modern React UI** - Tailwind CSS, Framer Motion animations
+- ✅ **API Gateway** - Spring Cloud Gateway routing
+- ✅ **Health Checks** - Kubernetes probes configured
+- ✅ **GitOps Ready** - GHCR images, k8s manifests
 
-## 📊 Monitoring
+## 🖥️ Local Development
 
-- **Swagger UI**: `http://<host>:8081/swagger-ui.html`
-- **Prometheus**: `http://<host>:9090`
-- **Grafana**: `http://<host>:3001`
-- **Kafdrop**: `http://<host>:9000`
+### Quick Restart (After Pipeline Push)
 
-## 👥 Authors
+```powershell
+# Pull latest changes
+git pull origin develop
 
-- **Saurabh Kumar** - [GitHub](https://github.com/saurabh3108)
+# Restart only changed services
+./deploy-k8s.ps1 -RolloutOnly
+```
+
+### Full Redeploy
+
+```powershell
+./deploy-k8s.ps1 -Environment dev
+```
+
+### Skip Infrastructure
+
+```powershell
+./deploy-k8s.ps1 -Environment dev -SkipInfra
+```
+
+## 📊 Upcoming Features
+
+- [ ] Prometheus metrics collection
+- [ ] Grafana dashboards
+- [ ] User authentication (JWT)
+- [ ] Transaction notifications
+- [ ] QR code payments
+
+## 👥 Author
+
+**Saurabh Kumar** - [GitHub](https://github.com/saurabh3108)
 
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+*Built with ❤️ using Spring Boot, React, Kubernetes, and Kafka*

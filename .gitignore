@@ -63,3 +63,6 @@ build/
 *.pem
 *.key
 secrets.yaml
+
+# Private documentation (local only)
+PAYFLOW_PROJECT_DOCUMENTATION.md
