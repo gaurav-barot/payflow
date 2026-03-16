@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
       - name: api-gateway
-        image: ghcr.io/saurabh3108/payflow-api-gateway:develop
+        image: ghcr.io/gaurav-barot/payflow-api-gateway:develop
         ports:
         - containerPort: 8080
         envFrom:

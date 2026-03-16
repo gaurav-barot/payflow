@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
       - name: transaction-service
-        image: ghcr.io/saurabh3108/payflow-transaction-service:develop
+        image: ghcr.io/gaurav-barot/payflow-transaction-service:develop
         ports:
         - containerPort: 8082
         envFrom:

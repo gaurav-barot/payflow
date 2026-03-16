@@ -1,6 +1,6 @@
 # 💰 PayFlow - Digital Wallet & Payment Platform
 
-[![CI/CD Pipeline](https://github.com/saurabh3108/payflow/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/saurabh3108/payflow/actions/workflows/ci-cd.yml)
+[![CI/CD Pipeline](https://github.com/gaurav-barot/payflow/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/gaurav-barot/payflow/actions/workflows/ci-cd.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 > Real-time Digital Wallet and Payment Platform built with Microservices Architecture, Kubernetes, and Event-Driven Design
@@ -218,7 +218,7 @@ Browser (localhost:8000)
 
 ```powershell
 # Clone the repository
-git clone https://github.com/saurabh3108/payflow.git
+git clone https://github.com/gaurav-barot/payflow.git
 cd payflow
 
 # Deploy to Kubernetes
@@ -348,7 +348,7 @@ git pull origin develop
 
 ## 👥 Author
 
-**Saurabh Kumar** - [GitHub](https://github.com/saurabh3108)
+**Gaurav Barot** - [GitHub](https://github.com/gaurav-barot)
 
 ## 📄 License
 

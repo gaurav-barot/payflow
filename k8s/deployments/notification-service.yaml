@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
       - name: notification-service
-        image: ghcr.io/saurabh3108/payflow-notification-service:develop
+        image: ghcr.io/gaurav-barot/payflow-notification-service:develop
         ports:
         - containerPort: 8083
         envFrom:
